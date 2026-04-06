@@ -38,6 +38,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+import time
 
 import httpx
 from async_lru import alru_cache
@@ -50,19 +51,16 @@ logger = logging.getLogger(__name__)
 image = (
     flyte.Image.from_debian_base()
     .with_pip_packages("vllm", "hf-transfer", "unionai-reuse")
-    .with_pip_packages("flashinfer-python==0.6.4", "flashinfer-cubin==0.6.4")
-    .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu129")
+    .with_pip_packages("flashinfer-python==0.6.6", "flashinfer-cubin==0.6.6")
+    .with_pip_packages("flashinfer-jit-cache==0.6.6", index_url="https://flashinfer.ai/whl/cu129")
     .with_env_vars({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
+    .with_env_vars({"FOOBAR": "1"})
 )
 
 gpu_env = flyte.TaskEnvironment(
     name="gpu_worker",
-    resources=flyte.Resources(cpu=4, memory="16Gi", gpu="A10G:1"),
+    resources=flyte.Resources(cpu=4, memory="16Gi", gpu="L4:1"),
     image=image,
-    reusable=flyte.ReusePolicy(
-        replicas=2,
-        concurrency=10,
-    ),
 )
 
 driver_env = flyte.TaskEnvironment(
@@ -117,7 +115,7 @@ async def get_inference_fn():
         outputs = llm.generate(texts, params)
         return [o.outputs[0].text for o in outputs]
 
-    logger.info("vLLM model loaded")
+    print(f"{time.asctime()} vLLM model loaded")
     return inference
 
 
@@ -137,7 +135,7 @@ async def get_batcher() -> TokenBatcher[Prompt, str]:
         max_queue_size=5_000,
     )
     await batcher.start()
-    logger.info("TokenBatcher started")
+    print(f"{time.asctime()} TokenBatcher started")
     return batcher
 
 
@@ -165,6 +163,9 @@ async def infer_batch(
     Returns:
         List of generated outputs, one per prompt.
     """
+    from vllm import LLM, SamplingParams
+    print(f"{time.asctime()} vllm imported")
+
     batcher = await get_batcher()
 
     futures: list[asyncio.Future[str]] = []
