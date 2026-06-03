@@ -41,11 +41,13 @@ def extract_app_env_module(app_env: AppEnvironment, /, source_dir: pathlib.Path)
 
     # Calculate module name relative to source_dir
     try:
+        logger.info(f"File path: {file_path}, source_dir: {source_dir}")
         relative_path = file_path.relative_to(source_dir or pathlib.Path("."))
         logger.info(f"Relative path: {relative_path}, {source_dir} {pathlib.Path('.')}")
         module_name = pathlib.Path(relative_path).with_suffix("").as_posix().replace("/", ".")
     except ValueError:
         # File is not relative to source_dir, use the stem
+        logger.info(f"File is not relative to source_dir, using stem: {file_path.stem}")
         module_name = file_path.stem
 
     # Instead of reloading the module, inspect the caller frame's local variables
@@ -72,6 +74,8 @@ def extract_app_env_module(app_env: AppEnvironment, /, source_dir: pathlib.Path)
             # In this case, use extract_obj_module as a last resort
             _, entity_module = extract_obj_module(app_env, source_dir)
             caller_globals = entity_module.__dict__
+
+    logger.info(f"Caller globals: {caller_globals}")
 
     # Extract variable name from module - look for AppEnvironment instances
     app_var_name = None

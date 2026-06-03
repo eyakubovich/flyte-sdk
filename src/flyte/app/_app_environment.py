@@ -264,6 +264,7 @@ class AppEnvironment(Environment):
         self, serialize_context: SerializationContext, parameter_overrides: list[Parameter] | None = None
     ) -> List[str]:
         from flyte._internal.resolvers.app_env import AppEnvResolver
+        from flyte._logging import logger
 
         if self.command is None:
             # Default command
@@ -308,6 +309,7 @@ class AppEnvironment(Environment):
             # (i.e., app was created in a module and can be found)
             if self._caller_frame is not None:
                 assert serialize_context.root_dir is not None
+                logger.info(f"Caller frame:{self._caller_frame}")
                 try:
                     _app_env_resolver = AppEnvResolver()
                     loader_args = _app_env_resolver.loader_args(self, serialize_context.root_dir)

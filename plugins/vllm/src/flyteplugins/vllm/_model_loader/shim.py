@@ -1,5 +1,10 @@
+import json
+import time
+import urllib.request
 import logging
-from typing import Generator
+import os
+import threading
+from typing import Generator, Optional
 
 import torch
 from flyte.app.extras._model_loader.config import (
@@ -8,7 +13,7 @@ from flyte.app.extras._model_loader.config import (
     STREAM_SAFETENSORS,
 )
 from flyte.app.extras._model_loader.loader import SafeTensorsStreamer, prefetch
-
+from flyte.app.extras import checkpoint
 from flyteplugins.vllm._constants import VLLM_MIN_VERSION, VLLM_MIN_VERSION_STR
 
 try:
@@ -130,6 +135,72 @@ async def _get_model_files():
         exclude_safetensors=STREAM_SAFETENSORS,
     )
 
+class VLLMModelCheckpoint:
+    port: str
+    model_id: str
+
+    def __init__(self, port: str, model_id: str):
+        self.port = port
+        self.model_id = model_id
+
+    def warm_up(self):
+        url = f"http://localhost:{self.port}/v1/chat/completions"
+        payload = {
+            "model": self.model_id,
+            "messages": [{"role": "user", "content": "Hello, LLM!"}],
+            "max_completion_tokens": 16,
+        }
+
+        success = 0
+        while success < 3:
+            try:
+                self._post(url, payload)
+                success += 1
+            except Exception as e:
+                print(f"Failed to warm up: {e}, retrying...")
+                time.sleep(1)
+
+    def sleep(self):
+        url = f"http://localhost:{self.port}/sleep?level=1"
+        self._post(url)
+
+    def wakeup(self):
+        url = f"http://localhost:{self.port}/wake_up"
+        self._post(url)
+
+    def _post(self, url: str, payload: Optional[dict[str, str]] = None) -> None:
+        headers = {}
+        if payload is not None:
+            data = json.dumps(payload).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        else:
+            data = None
+        req = urllib.request.Request(url, data=data, method="POST", headers=headers)
+        resp = urllib.request.urlopen(req)
+        if resp.status >= 400:
+            raise Exception(f"Failed to post: {resp.status}")
+
+    def pre_checkpoint(self):
+        self.warm_up()
+        self.sleep()
+
+    def post_restore(self):
+        self.wakeup()
+
+def do_checkpoint():
+    import argparse
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    serve_parser = subparsers.add_parser("serve", help="Serve the model")
+    serve_parser.add_argument("--port", type=str, required=True)
+    serve_parser.add_argument("--served-model-name", type=str, required=True)
+    args = parser.parse_known_args()[0]
+    assert args.command == "serve"
+
+    cp = VLLMModelCheckpoint(args.port, args.served_model_name)
+    cp.pre_checkpoint()
+    checkpoint()
+    cp.post_restore()
 
 def main():
     import asyncio
@@ -147,5 +218,8 @@ def main():
     if REMOTE_MODEL_PATH:
         logger.info("Prefetching model files from object storage...")
         asyncio.run(_get_model_files())
+
+    if os.getenv("FLYTE_CHECKPOINT_SIGNAL_DIR"):
+        threading.Thread(target=do_checkpoint).start()
 
     vllm.entrypoints.cli.main.main()
